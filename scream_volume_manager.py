@@ -2,15 +2,6 @@ import sys
 from dataclasses import dataclass
 
 import numpy as np
-import sounddevice as sd
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
 
 
 @dataclass
@@ -20,62 +11,18 @@ class AudioMeasurement:
     percent: int
 
 
-class ScreamVolumeManager(QWidget):
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("Scream Volume Manager")
-        self.resize(420, 220)
-
-        self.status_label = QLabel("Checking microphone...", self)
-        self.status_label.setWordWrap(True)
-
-        self.result_label = QLabel("Measured Volume: --%", self)
-        self.result_label.setAlignment(Qt.AlignCenter)
-        self.result_label.setStyleSheet("font-size: 22px; font-weight: bold;")
-
-        self.button = QPushButton("SET VOLUME", self)
-        self.button.clicked.connect(self.on_set_volume_clicked)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.result_label)
-        layout.addWidget(self.button)
-        self.setLayout(layout)
-
-        self._validate_microphone()
-
-    def _validate_microphone(self) -> None:
-        try:
-            device = get_default_input_device()
-            self.status_label.setText(
-                f"Microphone detected: {device['name']}\n"
-                "Press SET VOLUME, then scream for about 2–3 seconds."
-            )
-            self.button.setEnabled(True)
-        except Exception as exc:
-            self.status_label.setText(f"Microphone not available: {exc}")
-            self.button.setEnabled(False)
-
-    def on_set_volume_clicked(self) -> None:
-        self.button.setEnabled(False)
-        self.status_label.setText("Recording for 2.5 seconds... Scream now!")
-        QApplication.processEvents()
-
-        try:
-            measurement = record_and_measure(duration_seconds=2.5)
-            set_windows_master_volume(measurement.percent)
-            self.result_label.setText(f"Measured Volume: {measurement.percent}%")
-            self.status_label.setText(
-                f"Done. RMS={measurement.rms:.4f}, Peak={measurement.peak:.4f}. "
-                f"Windows master volume set to {measurement.percent}%."
-            )
-        except Exception as exc:
-            self.status_label.setText(f"Error: {exc}")
-        finally:
-            self.button.setEnabled(True)
+def _sounddevice():
+    try:
+        import sounddevice as sd  # noqa: PLC0415
+    except OSError as exc:
+        raise RuntimeError(
+            "Audio backend unavailable. Install PortAudio (Windows users: ensure sound drivers are installed)."
+        ) from exc
+    return sd
 
 
 def get_default_input_device() -> dict:
+    sd = _sounddevice()
     default_input_index = sd.default.device[0]
     if default_input_index is None or default_input_index < 0:
         raise RuntimeError("No default input device configured.")
@@ -88,6 +35,7 @@ def get_default_input_device() -> dict:
 
 
 def record_and_measure(duration_seconds: float = 2.5, sample_rate: int = 44100) -> AudioMeasurement:
+    sd = _sounddevice()
     get_default_input_device()
 
     frames = int(duration_seconds * sample_rate)
@@ -114,9 +62,10 @@ def set_windows_master_volume(percent: int) -> None:
     if not sys.platform.startswith("win"):
         raise RuntimeError("Windows volume control is only supported on Windows.")
 
-    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
     from ctypes import POINTER, cast
+
     from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
@@ -125,6 +74,67 @@ def set_windows_master_volume(percent: int) -> None:
 
 
 def main() -> int:
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
+    except Exception as exc:  # pragma: no cover
+        print(f"PySide6 is not usable in this environment: {exc}")
+        return 1
+
+    class ScreamVolumeManager(QWidget):
+        def __init__(self) -> None:
+            super().__init__()
+            self.setWindowTitle("Scream Volume Manager")
+            self.resize(420, 220)
+
+            self.status_label = QLabel("Checking microphone...", self)
+            self.status_label.setWordWrap(True)
+
+            self.result_label = QLabel("Measured Volume: --%", self)
+            self.result_label.setAlignment(Qt.AlignCenter)
+            self.result_label.setStyleSheet("font-size: 22px; font-weight: bold;")
+
+            self.button = QPushButton("SET VOLUME", self)
+            self.button.clicked.connect(self.on_set_volume_clicked)
+
+            layout = QVBoxLayout(self)
+            layout.addWidget(self.status_label)
+            layout.addWidget(self.result_label)
+            layout.addWidget(self.button)
+            self.setLayout(layout)
+
+            self._validate_microphone()
+
+        def _validate_microphone(self) -> None:
+            try:
+                device = get_default_input_device()
+                self.status_label.setText(
+                    f"Microphone detected: {device['name']}\\n"
+                    "Press SET VOLUME, then scream for about 2–3 seconds."
+                )
+                self.button.setEnabled(True)
+            except Exception as exc:
+                self.status_label.setText(f"Microphone not available: {exc}")
+                self.button.setEnabled(False)
+
+        def on_set_volume_clicked(self) -> None:
+            self.button.setEnabled(False)
+            self.status_label.setText("Recording for 2.5 seconds... Scream now!")
+            QApplication.processEvents()
+
+            try:
+                measurement = record_and_measure(duration_seconds=2.5)
+                set_windows_master_volume(measurement.percent)
+                self.result_label.setText(f"Measured Volume: {measurement.percent}%")
+                self.status_label.setText(
+                    f"Done. RMS={measurement.rms:.4f}, Peak={measurement.peak:.4f}. "
+                    f"Windows master volume set to {measurement.percent}%."
+                )
+            except Exception as exc:
+                self.status_label.setText(f"Error: {exc}")
+            finally:
+                self.button.setEnabled(True)
+
     app = QApplication(sys.argv)
     window = ScreamVolumeManager()
     window.show()
