@@ -284,18 +284,28 @@ def analyze_audio(samples: np.ndarray, settings: AppSettings) -> AudioMeasuremen
     )
 
 
-def get_windows_master_volume() -> int:
+def _get_windows_endpoint_volume():
     if not sys.platform.startswith("win"):
         raise RuntimeError("Windows volume access is only supported on Windows.")
+
+    from pycaw.pycaw import AudioUtilities
+
+    device = AudioUtilities.GetSpeakers()
+    endpoint = getattr(device, "EndpointVolume", None)
+    if endpoint is not None:
+        return endpoint
 
     from ctypes import POINTER, cast
 
     from comtypes import CLSCTX_ALL
-    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    from pycaw.pycaw import IAudioEndpointVolume
 
-    devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    endpoint = cast(interface, POINTER(IAudioEndpointVolume))
+    interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    return cast(interface, POINTER(IAudioEndpointVolume))
+
+
+def get_windows_master_volume() -> int:
+    endpoint = _get_windows_endpoint_volume()
     scalar = endpoint.GetMasterVolumeLevelScalar()
     return int(round(float(np.clip(scalar, 0.0, 1.0)) * 100))
 
@@ -307,15 +317,15 @@ def set_windows_master_volume(percent: int) -> None:
     if not sys.platform.startswith("win"):
         raise RuntimeError("Windows volume control is only supported on Windows.")
 
-    from ctypes import POINTER, cast
-
-    from comtypes import CLSCTX_ALL
-    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
-    devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    endpoint = cast(interface, POINTER(IAudioEndpointVolume))
+    endpoint = _get_windows_endpoint_volume()
     endpoint.SetMasterVolumeLevelScalar(percent / 100.0, None)
+
+
+def try_get_windows_master_volume() -> Optional[int]:
+    try:
+        return get_windows_master_volume()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def loudness_feedback(percent: int) -> str:
@@ -415,6 +425,7 @@ class ScreamVolumeWindow(QMainWindow):
         self.resize(980, 700)
         self.settings_data = load_settings()
         self.last_measurement: Optional[AudioMeasurement] = None
+        self.pre_scream_system_volume: Optional[int] = None
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[RecorderWorker] = None
         self.mode = "idle"
@@ -778,8 +789,8 @@ class ScreamVolumeWindow(QMainWindow):
         try:
             for index, name in list_input_devices():
                 self.microphone_combo.addItem(name, index)
-        except Exception as exc:  # noqa: BLE001
-            self.settings_status.setText(f"Microphone list unavailable: {exc}")
+        except Exception:  # noqa: BLE001
+            self.settings_status.setText("Microphone list unavailable.")
 
         target = self.settings_data.selected_microphone
         for i in range(self.microphone_combo.count()):
@@ -796,8 +807,8 @@ class ScreamVolumeWindow(QMainWindow):
             device = get_input_device_info(self.settings_data.selected_microphone)
             self.home_microphone_label.setText(f"MICROPHONE: {device['name']}")
             self.set_volume_button.setEnabled(True)
-        except Exception as exc:  # noqa: BLE001
-            self.home_microphone_label.setText(f"MICROPHONE ERROR: {exc}")
+        except Exception:  # noqa: BLE001
+            self.home_microphone_label.setText("MICROPHONE ERROR: unavailable")
             self.set_volume_button.setEnabled(False)
 
         if self.settings_data.calibration_reference:
@@ -805,11 +816,11 @@ class ScreamVolumeWindow(QMainWindow):
         else:
             self.calibration_status_label.setText("CALIBRATION: Not calibrated")
 
-        try:
-            current_volume = get_windows_master_volume()
+        current_volume = try_get_windows_master_volume()
+        if current_volume is None:
+            self.system_volume_label.setText("SYSTEM VOLUME: unavailable")
+        else:
             self.system_volume_label.setText(f"SYSTEM VOLUME: {current_volume}%")
-        except Exception as exc:  # noqa: BLE001
-            self.system_volume_label.setText(f"SYSTEM VOLUME: unavailable ({exc})")
 
     def save_settings_from_ui(self) -> None:
         self.settings_data.selected_microphone = self.microphone_combo.currentData()
@@ -857,6 +868,7 @@ class ScreamVolumeWindow(QMainWindow):
         validate_settings(self.settings_data)
         self.mode = mode
         if mode == "scream":
+            self.pre_scream_system_volume = try_get_windows_master_volume()
             self.scream_waveform.clear()
             self.scream_progress.setValue(0)
             self.scream_countdown.setText(f"Recording: {RECORD_DURATION_SECONDS:.1f}s")
@@ -912,7 +924,7 @@ class ScreamVolumeWindow(QMainWindow):
         self.worker_thread = None
 
         if error:
-            message = f"Recording failed: {error}"
+            message = "Recording failed. Please try again."
             if self.mode == "calibration":
                 self.calibration_status.setText(message)
                 self.stack.setCurrentWidget(self.calibration_page)
@@ -937,12 +949,15 @@ class ScreamVolumeWindow(QMainWindow):
             self.refresh_home()
             return
 
+        volume_text = "SYSTEM VOLUME: unavailable"
         try:
             set_windows_master_volume(measurement.output_percent)
-            system_value = measurement.output_percent
-            volume_text = f"SYSTEM VOLUME: {system_value}%"
-        except Exception as exc:  # noqa: BLE001
-            volume_text = f"SYSTEM VOLUME: failed ({exc})"
+        except Exception:  # noqa: BLE001
+            pass
+
+        current_volume = try_get_windows_master_volume()
+        if current_volume is not None:
+            volume_text = f"SYSTEM VOLUME: {current_volume}%"
 
         self.result_percent.setText(f"{measurement.output_percent}%")
         self.result_scream_label.setText(f"YOUR SCREAM: {measurement.raw_percent}%")
