@@ -382,29 +382,29 @@ class GlowButton(QPushButton):
     glow = Property(float, get_glow, set_glow)
 
     def _refresh_style(self) -> None:
-        alpha = int(120 + self._glow * 90)
+        border_alpha = int(180 + self._glow * 60)
+        hover_alpha = int(210 + self._glow * 45)
         self.setStyleSheet(
-            """
-            QPushButton {
+            f"""
+            QPushButton {{
                 background-color: #3A4FF4;
                 color: white;
-                border: 1px solid rgba(140,180,255,180);
+                border: 1px solid rgba(140,180,255,{border_alpha});
                 border-radius: 18px;
                 font-size: 20px;
                 font-weight: 700;
                 padding: 16px 28px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #4B5CFF;
-                border-color: rgba(160,220,255,220);
-            }
-            QPushButton:disabled {
+                border-color: rgba(160,220,255,{hover_alpha});
+            }}
+            QPushButton:disabled {{
                 background-color: #2A3550;
                 color: #8892A8;
                 border-color: #2F3A50;
-            }
+            }}
             """
-            + f"QPushButton {{ box-shadow: 0 0 24px rgba(80,130,255,{alpha}); }}"
         )
 
 
