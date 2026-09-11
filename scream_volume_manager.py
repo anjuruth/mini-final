@@ -789,8 +789,8 @@ class ScreamVolumeWindow(QMainWindow):
         try:
             for index, name in list_input_devices():
                 self.microphone_combo.addItem(name, index)
-        except Exception as exc:  # noqa: BLE001
-            self.settings_status.setText(f"Microphone list unavailable: {exc}")
+        except Exception:  # noqa: BLE001
+            self.settings_status.setText("Microphone list unavailable.")
 
         target = self.settings_data.selected_microphone
         for i in range(self.microphone_combo.count()):
@@ -807,8 +807,8 @@ class ScreamVolumeWindow(QMainWindow):
             device = get_input_device_info(self.settings_data.selected_microphone)
             self.home_microphone_label.setText(f"MICROPHONE: {device['name']}")
             self.set_volume_button.setEnabled(True)
-        except Exception as exc:  # noqa: BLE001
-            self.home_microphone_label.setText(f"MICROPHONE ERROR: {exc}")
+        except Exception:  # noqa: BLE001
+            self.home_microphone_label.setText("MICROPHONE ERROR: unavailable")
             self.set_volume_button.setEnabled(False)
 
         if self.settings_data.calibration_reference:
@@ -924,7 +924,7 @@ class ScreamVolumeWindow(QMainWindow):
         self.worker_thread = None
 
         if error:
-            message = f"Recording failed: {error}"
+            message = "Recording failed. Please try again."
             if self.mode == "calibration":
                 self.calibration_status.setText(message)
                 self.stack.setCurrentWidget(self.calibration_page)
